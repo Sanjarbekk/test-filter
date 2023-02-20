@@ -10,10 +10,10 @@ public final class Constants {
     public static final String REQUEST = "Request";
     public static final String PATH = "Path";
     public static final String METHOD = "Method";
-    public static final String KEY = "Key";
-    public static final String ALGORITHM = "Algorithm";
-    public static final String SIGNATURE = "Signature";
     public static final String BRACKET = ": {}";
+    public static final String SIGNATURE = "X-Signature";
+    public static final String DATE = "X-Date";
+    public static final String APP_ID = "X-AppId";
 
     public static final String ERROR_MESSAGE = "Some error message";
 

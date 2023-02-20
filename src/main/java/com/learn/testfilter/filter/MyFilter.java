@@ -1,56 +1,66 @@
 package com.learn.testfilter.filter;
 
-import com.learn.testfilter.payload.request.SignatureData;
+import com.learn.testfilter.service.KeyService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Configurable;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.crypto.codec.Hex;
+import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.Base64;
 
 import static com.learn.testfilter.utils.constants.Constants.*;
 
+@Configuration
 public class MyFilter extends OncePerRequestFilter {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(MyFilter.class);
+    private static KeyService keyService = null;
+
+    public MyFilter(KeyService keyService) {
+        this.keyService = keyService;
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
 
         LOGGER.info(REQUEST + PATH + BRACKET, request.getRequestURI());
         LOGGER.info(REQUEST + METHOD + BRACKET, request.getMethod());
-        LOGGER.info(REQUEST + KEY + BRACKET, request.getHeader(KEY));
-        LOGGER.info(REQUEST + ALGORITHM + BRACKET, request.getHeader(ALGORITHM));
         LOGGER.info(REQUEST + SIGNATURE + BRACKET, request.getHeader(SIGNATURE));
+        LOGGER.info(REQUEST + DATE + BRACKET, request.getHeader(DATE));
+        LOGGER.info(REQUEST + APP_ID + BRACKET, request.getHeader(APP_ID));
 
-        if (checkUrlAndDate(request)) {
-            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-            response.getWriter().write(ERROR_MESSAGE);
-            return;
+        try {
+            if (!checkUrlAndDate(request)) {
+                response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                response.getWriter().write(ERROR_MESSAGE);
+                return;
+            }
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
         filterChain.doFilter(request, response);
     }
 
-    private boolean checkUrlAndDate(HttpServletRequest request) {
-        String requestPath = request.getRequestURI();
-        String key = request.getHeader(KEY);
-        String signature = request.getHeader(SIGNATURE);
-
-        SignatureData signatureData = decodeSignature(signature, key);
-        return checkUrl(signatureData.getUrl(), requestPath) && checkDate(signatureData.getDate());
-    }
-
-    private boolean checkUrl(String signUrl, String requestPath) {
-        return signUrl.equals(requestPath);
+    private boolean checkUrlAndDate(HttpServletRequest request) throws Exception {
+        String date = request.getHeader(DATE);
+        String key = keyService.getById(request.getHeader(APP_ID));
+        String createSignature = encode(request.getRequestURI() + date, key);
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+        LocalDateTime dateTime = LocalDateTime.parse(date, formatter);
+        return createSignature.equals(request.getHeader(SIGNATURE)) && checkDate(dateTime);
     }
 
     private boolean checkDate(LocalDateTime signDate) {
@@ -58,20 +68,11 @@ public class MyFilter extends OncePerRequestFilter {
         return Math.abs(diffInMinutes) <= 5;
     }
 
-    public SignatureData decodeSignature(String encodedSignature, String key) {
-        try {
-            byte[] signature = Base64.getDecoder().decode(encodedSignature);
-            SecretKeySpec signingKey = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), HMAC_SHA256_ALGORITHM);
-            Mac mac = Mac.getInstance(HMAC_SHA256_ALGORITHM);
-            mac.init(signingKey);
-            byte[] rawHmac = mac.doFinal(signature);
-            String decodedSignature = new String(rawHmac, StandardCharsets.UTF_8);
-            String url = decodedSignature.substring(0, decodedSignature.length() - DATE_FORMAT.length());
-            String dateString = decodedSignature.substring(decodedSignature.length() - DATE_FORMAT.length());
-            LocalDateTime date = LocalDateTime.parse(dateString, DATE_TIME_FORMATTER);
-            return new SignatureData(url, date);
-        } catch (Exception e) {
-            throw new IllegalArgumentException();
-        }
+    public String encode(String message, String key) throws Exception {
+        SecretKeySpec signingKey = new SecretKeySpec(key.getBytes(), HMAC_SHA256_ALGORITHM);
+        Mac mac = Mac.getInstance(HMAC_SHA256_ALGORITHM);
+        mac.init(signingKey);
+        byte[] rawHmac = mac.doFinal(message.getBytes());
+        return new String(Hex.encode(rawHmac));
     }
 }
